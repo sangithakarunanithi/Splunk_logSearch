@@ -72,16 +72,41 @@ class LogReport {
     public List<LogEntry> getEntries() { return entries; }
 }
 
+class AnalysisEntry {
+    private String category;
+    private int countInCorrect;
+    private int countInSuspect;
+    private String verdict;
+
+    public AnalysisEntry(String category, int countInCorrect, int countInSuspect) {
+        this.category = category;
+        this.countInCorrect = countInCorrect;
+        this.countInSuspect = countInSuspect;
+        int diff = Math.abs(countInCorrect - countInSuspect);
+        if (countInCorrect > countInSuspect)
+            this.verdict = "Occurs " + diff + " more time(s) in Correct — may be missing/skipped in Suspect";
+        else
+            this.verdict = "Occurs " + diff + " more time(s) in Suspect — unexpected extra operation";
+    }
+
+    public String getCategory() { return category; }
+    public int getCountInCorrect() { return countInCorrect; }
+    public int getCountInSuspect() { return countInSuspect; }
+    public String getVerdict() { return verdict; }
+}
+
 class ComparisonResult {
     private LogReport logAReport, logBReport;
     private List<LogEntry> extraInA = new ArrayList<>();
     private List<LogEntry> extraInB = new ArrayList<>();
+    private List<AnalysisEntry> analysis = new ArrayList<>();
 
     public ComparisonResult(LogReport a, LogReport b) { logAReport = a; logBReport = b; }
     public LogReport getLogAReport() { return logAReport; }
     public LogReport getLogBReport() { return logBReport; }
     public List<LogEntry> getExtraInA() { return extraInA; }
     public List<LogEntry> getExtraInB() { return extraInB; }
+    public List<AnalysisEntry> getAnalysis() { return analysis; }
     public int getTotalDifferences() { return extraInA.size() + extraInB.size(); }
     public int getCommonCount() { return logAReport.getEntries().size() - extraInA.size(); }
 }
@@ -216,7 +241,45 @@ class LogComparisonService {
             }
         }
 
+        // ───── Analysis: group ALL entries (incl duplicates) by keyword pattern ─────
+        Map<String, int[]> catCounts = new LinkedHashMap<>();
+
+        for (LogEntry e : a) {
+            String cat = extractKeyPattern(e.getMessage());
+            catCounts.computeIfAbsent(cat, k -> new int[2])[0]++;
+        }
+        for (LogEntry e : b) {
+            String cat = extractKeyPattern(e.getMessage());
+            catCounts.computeIfAbsent(cat, k -> new int[2])[1]++;
+        }
+
+        for (Map.Entry<String, int[]> e : catCounts.entrySet()) {
+            int cA = e.getValue()[0], cB = e.getValue()[1];
+            if (cA != cB) {
+                r.getAnalysis().add(new AnalysisEntry(e.getKey(), cA, cB));
+            }
+        }
+
         return r;
+    }
+
+    private String extractKeyPattern(String msg) {
+        if (msg == null || msg.isEmpty()) return "(empty)";
+        String s = msg.toLowerCase().trim();
+        // Remove leading metadata like date, log level, thread info
+        s = s.replaceAll("^\\d{4}-\\d{2}-\\d{2}\\s+\\S+\\s+", "");
+        s = s.replaceAll("^\\[\\S+\\]\\s*", "");
+        s = s.replaceAll("^(info|warn|error|debug|trace)\\s*[:\\-]?\\s*", "");
+        // Extract the first meaningful action phrase (first 3-5 meaningful words)
+        s = s.replaceAll("[\\[\\](){}]", " ").trim();
+        String[] words = s.split("\\s+");
+        int take = Math.min(6, words.length);
+        StringBuilder key = new StringBuilder();
+        for (int i = 0; i < take; i++) {
+            if (i > 0) key.append(" ");
+            key.append(words[i]);
+        }
+        return key.toString();
     }
 }
 

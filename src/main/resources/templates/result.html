@@ -143,6 +143,34 @@ td.level-INFO { color: #3fb950; }
     </div>
   </div>
 
+  <!-- ───── ANALYSIS ───── -->
+  <div class="section" th:if="${#lists.size(r.analysis) > 0}">
+    <h2>
+      Key Findings / Root Cause Analysis
+      <span class="count-badge" th:text="${#lists.size(r.analysis)} + ' patterns'"></span>
+    </h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Pattern / Operation</th>
+            <th>Correct</th>
+            <th>Suspect</th>
+            <th>Verdict</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr th:each="a : ${r.analysis}">
+            <td class="msg" style="font-weight:500" th:text="${a.category}">pattern</td>
+            <td style="text-align:center;color:#3fb950;font-weight:600" th:text="${a.countInCorrect}">0</td>
+            <td style="text-align:center;color:#f85149;font-weight:600" th:text="${a.countInSuspect}">0</td>
+            <td class="msg" th:text="${a.verdict}">verdict</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
   <!-- ───── EXTRA IN CORRECT LOG (present in correct, missing from suspect) ───── -->
   <div class="section" th:if="${#lists.size(r.extraInA) > 0}">
     <h2>
