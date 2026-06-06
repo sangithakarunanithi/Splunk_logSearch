@@ -1,0 +1,10 @@
+com\logcomparer\service\CsvParserService.class
+com\logcomparer\model\LogReport.class
+com\logcomparer\service\LogComparisonService.class
+com\logcomparer\model\DiffEntry$Severity.class
+com\logcomparer\model\LogEntry.class
+com\logcomparer\model\DiffEntry$Type.class
+com\logcomparer\controller\LogController.class
+com\logcomparer\model\ComparisonResult.class
+com\logcomparer\LogComparerApplication.class
+com\logcomparer\model\DiffEntry.class
