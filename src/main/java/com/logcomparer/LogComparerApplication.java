@@ -1,0 +1,300 @@
+package com.logcomparer;
+
+import org.apache.commons.csv.CSVFormat;
+import org.apache.commons.csv.CSVParser;
+import org.apache.commons.csv.CSVRecord;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.stereotype.Controller;
+import org.springframework.stereotype.Service;
+import org.springframework.ui.Model;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.io.*;
+import java.nio.charset.StandardCharsets;
+import java.util.*;
+import java.util.regex.Pattern;
+
+@SpringBootApplication
+public class LogComparerApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(LogComparerApplication.class, args);
+    }
+}
+
+// ───── Models ─────
+
+class LogEntry {
+    private String timestamp, level, component, message, normalizedMessage;
+    private int lineNumber;
+
+    public LogEntry(int lineNumber) {
+        this.lineNumber = lineNumber;
+        this.level = "UNKNOWN";
+        this.component = this.message = this.timestamp = "";
+    }
+
+    public String getTimestamp() { return timestamp; }
+    public void setTimestamp(String v) { timestamp = v; }
+    public String getLevel() { return level; }
+    public void setLevel(String v) { level = v; }
+    public String getComponent() { return component; }
+    public void setComponent(String v) { component = v; }
+    public String getMessage() { return message; }
+    public void setMessage(String v) { message = v; }
+    public String getNormalizedMessage() { return normalizedMessage; }
+    public void setNormalizedMessage(String v) { normalizedMessage = v; }
+    public int getLineNumber() { return lineNumber; }
+    public boolean isError() { return "ERROR".equalsIgnoreCase(level); }
+    public boolean isWarn() { return "WARN".equalsIgnoreCase(level) || "WARNING".equalsIgnoreCase(level); }
+}
+
+class LogReport {
+    private String fileName;
+    private int totalEntries, errorCount, warnCount;
+    private List<LogEntry> entries;
+
+    public LogReport(String fileName, List<LogEntry> entries) {
+        this.fileName = fileName;
+        this.entries = entries;
+        this.totalEntries = entries.size();
+        this.errorCount = (int) entries.stream().filter(LogEntry::isError).count();
+        this.warnCount = (int) entries.stream().filter(LogEntry::isWarn).count();
+    }
+
+    public String getFileName() { return fileName; }
+    public int getTotalEntries() { return totalEntries; }
+    public int getErrorCount() { return errorCount; }
+    public int getWarnCount() { return warnCount; }
+    public List<LogEntry> getEntries() { return entries; }
+}
+
+class MatchedPair {
+    private LogEntry entryA, entryB;
+
+    public MatchedPair(LogEntry a, LogEntry b) { entryA = a; entryB = b; }
+    public LogEntry getEntryA() { return entryA; }
+    public LogEntry getEntryB() { return entryB; }
+}
+
+class ComparisonResult {
+    private LogReport logAReport, logBReport;
+    private List<MatchedPair> commonEntries = new ArrayList<>();
+    private List<LogEntry> extraInA = new ArrayList<>();
+    private List<LogEntry> extraInB = new ArrayList<>();
+
+    public ComparisonResult(LogReport a, LogReport b) { logAReport = a; logBReport = b; }
+    public LogReport getLogAReport() { return logAReport; }
+    public LogReport getLogBReport() { return logBReport; }
+    public List<MatchedPair> getCommonEntries() { return commonEntries; }
+    public List<LogEntry> getExtraInA() { return extraInA; }
+    public List<LogEntry> getExtraInB() { return extraInB; }
+    public int getTotalDifferences() { return extraInA.size() + extraInB.size(); }
+}
+
+// ───── Services ─────
+
+@Service
+class CsvParserService {
+    private static final Pattern UUID_PATTERN = Pattern.compile("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", Pattern.CASE_INSENSITIVE);
+    private static final Pattern HEX_PATTERN = Pattern.compile("0x[0-9a-fA-F]+");
+    private static final Pattern NUMBER_PATTERN = Pattern.compile("\\b\\d{2,}\\b");
+    private static final Pattern BRACKET_PATTERN = Pattern.compile("\\[[^\\]]+\\]");
+
+    public List<LogEntry> parse(MultipartFile file) throws IOException {
+        return parseContent(new String(file.getBytes(), StandardCharsets.UTF_8), file.getOriginalFilename());
+    }
+
+    public List<LogEntry> parseContent(String content, String fileName) throws IOException {
+        List<LogEntry> entries = new ArrayList<>();
+        try (Reader reader = new StringReader(content);
+             CSVParser parser = CSVFormat.DEFAULT.builder().setHeader().setSkipHeaderRecord(true)
+                 .setTrim(true).setIgnoreEmptyLines(true).setAllowMissingColumnNames(true).build().parse(reader)) {
+
+            Map<String, Integer> header = parser.getHeaderMap();
+            if (header == null || header.isEmpty())
+                throw new IOException("No valid header in " + fileName);
+
+            int timeIdx = find(header, "_time", "timestamp", "time", "date", "datetime");
+            int levelIdx = find(header, "level", "log_level", "severity", "loglevel");
+            int compIdx = find(header, "component", "class", "logger", "source");
+            int msgIdx = find(header, "message", "_raw", "log", "text", "event", "description", "msg", "detail", "reason");
+
+            int lineNum = 0;
+            for (CSVRecord r : parser) {
+                lineNum++;
+                LogEntry e = new LogEntry(lineNum);
+                if (timeIdx >= 0) e.setTimestamp(r.get(timeIdx));
+                if (levelIdx >= 0) e.setLevel(normalizeLevel(r.get(levelIdx)));
+                if (compIdx >= 0) e.setComponent(extractBracket(r.get(compIdx)));
+                if (msgIdx >= 0) {
+                    e.setMessage(r.get(msgIdx).trim());
+                } else {
+                    StringBuilder sb = new StringBuilder();
+                    for (int i = 0; i < r.size(); i++)
+                        if (i != timeIdx && i != levelIdx && i != compIdx) sb.append(r.get(i)).append(" ");
+                    e.setMessage(sb.toString().trim());
+                }
+                e.setNormalizedMessage(normalize(e.getMessage()));
+                entries.add(e);
+            }
+        }
+        return entries;
+    }
+
+    private int find(Map<String, Integer> map, String... candidates) {
+        Map<String, Integer> lower = new LinkedHashMap<>();
+        map.forEach((k, v) -> lower.put(k.toLowerCase().trim(), v));
+        for (String c : candidates) {
+            Integer v = lower.get(c.toLowerCase());
+            if (v != null) return v;
+        }
+        return -1;
+    }
+
+    private String normalizeLevel(String raw) {
+        if (raw == null) return "UNKNOWN";
+        String u = raw.toUpperCase().trim();
+        if (u.contains("ERROR") || u.contains("ERR")) return "ERROR";
+        if (u.contains("WARN")) return "WARN";
+        if (u.contains("INFO")) return "INFO";
+        if (u.contains("DEBUG") || u.contains("TRACE")) return "DEBUG";
+        if (u.contains("FATAL")) return "FATAL";
+        return u;
+    }
+
+    private String extractBracket(String raw) {
+        if (raw == null) return "";
+        var m = BRACKET_PATTERN.matcher(raw);
+        if (m.find()) { String g = m.group(); return g.substring(1, g.length() - 1).trim(); }
+        String[] p = raw.split("\\s+");
+        return p.length > 0 ? p[0] : raw.trim();
+    }
+
+    String normalize(String msg) {
+        if (msg == null) return "";
+        String s = msg;
+        s = UUID_PATTERN.matcher(s).replaceAll("{uuid}");
+        s = HEX_PATTERN.matcher(s).replaceAll("{hex}");
+        s = NUMBER_PATTERN.matcher(s).replaceAll("{n}");
+        return s.replaceAll("\\s+", " ").trim().toLowerCase();
+    }
+}
+
+@Service
+class LogComparisonService {
+
+    public ComparisonResult compare(List<LogEntry> a, List<LogEntry> b, String na, String nb) {
+        LogReport ra = new LogReport(na, a), rb = new LogReport(nb, b);
+        ComparisonResult r = new ComparisonResult(ra, rb);
+
+        // Sort both by timestamp for ordered comparison
+        List<LogEntry> sortedA = new ArrayList<>(a);
+        List<LogEntry> sortedB = new ArrayList<>(b);
+        sortedA.sort(Comparator.comparing(LogEntry::getTimestamp, Comparator.nullsLast(Comparator.naturalOrder())));
+        sortedB.sort(Comparator.comparing(LogEntry::getTimestamp, Comparator.nullsLast(Comparator.naturalOrder())));
+
+        // Greedy diff: walk both sequences, pair matching entries
+        int i = 0, j = 0;
+        int lookAhead = 5;
+
+        while (i < sortedA.size() && j < sortedB.size()) {
+            LogEntry entryA = sortedA.get(i);
+            LogEntry entryB = sortedB.get(j);
+
+            if (matches(entryA, entryB)) {
+                r.getCommonEntries().add(new MatchedPair(entryA, entryB));
+                i++; j++;
+                continue;
+            }
+
+            // Look ahead in B to see if A's current entry matches a future B entry
+            boolean foundInB = false;
+            for (int k = 1; k <= lookAhead && j + k < sortedB.size(); k++) {
+                if (matches(entryA, sortedB.get(j + k))) {
+                    for (int m = 0; m < k; m++)
+                        r.getExtraInB().add(sortedB.get(j + m));
+                    r.getCommonEntries().add(new MatchedPair(entryA, sortedB.get(j + k)));
+                    i++; j = j + k + 1;
+                    foundInB = true;
+                    break;
+                }
+            }
+            if (foundInB) continue;
+
+            // Look ahead in A to see if B's current entry matches a future A entry
+            boolean foundInA = false;
+            for (int k = 1; k <= lookAhead && i + k < sortedA.size(); k++) {
+                if (matches(sortedA.get(i + k), entryB)) {
+                    for (int m = 0; m < k; m++)
+                        r.getExtraInA().add(sortedA.get(i + m));
+                    r.getCommonEntries().add(new MatchedPair(sortedA.get(i + k), entryB));
+                    i = i + k + 1; j++;
+                    foundInA = true;
+                    break;
+                }
+            }
+            if (foundInA) continue;
+
+            // No match found in look-ahead — mark both as extra and advance
+            r.getExtraInA().add(entryA);
+            r.getExtraInB().add(entryB);
+            i++; j++;
+        }
+
+        // Remaining entries in A are extras
+        while (i < sortedA.size())
+            r.getExtraInA().add(sortedA.get(i++));
+
+        // Remaining entries in B are extras
+        while (j < sortedB.size())
+            r.getExtraInB().add(sortedB.get(j++));
+
+        return r;
+    }
+
+    private boolean matches(LogEntry a, LogEntry b) {
+        String normA = a.getNormalizedMessage();
+        String normB = b.getNormalizedMessage();
+        if (normA == null || normB == null) return false;
+        return normA.equals(normB);
+    }
+}
+
+// ───── Controller ─────
+
+@Controller
+class LogController {
+    private final CsvParserService parser;
+    private final LogComparisonService comparer;
+
+    public LogController(CsvParserService parser, LogComparisonService comparer) {
+        this.parser = parser; this.comparer = comparer;
+    }
+
+    @GetMapping("/")
+    public String index() { return "index"; }
+
+    @PostMapping("/compare")
+    public String compare(@RequestParam("fileA") MultipartFile fileA,
+                          @RequestParam("fileB") MultipartFile fileB, Model model) {
+        try {
+            if (fileA.isEmpty() || fileB.isEmpty()) {
+                model.addAttribute("error", "Upload both CSV files");
+                return "index";
+            }
+            var logA = parser.parse(fileA);
+            var logB = parser.parse(fileB);
+            ComparisonResult result = comparer.compare(logA, logB,
+                fileA.getOriginalFilename(), fileB.getOriginalFilename());
+            model.addAttribute("result", result);
+            return "result";
+        } catch (Exception e) {
+            model.addAttribute("error", "Error: " + e.getMessage());
+            return "index";
+        }
+    }
+}

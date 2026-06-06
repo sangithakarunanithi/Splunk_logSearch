@@ -1,0 +1,8 @@
+com\logcomparer\LogComparisonService.class
+com\logcomparer\LogReport.class
+com\logcomparer\LogComparerApplication.class
+com\logcomparer\CsvParserService.class
+com\logcomparer\LogEntry.class
+com\logcomparer\ComparisonResult.class
+com\logcomparer\LogController.class
+com\logcomparer\MatchedPair.class
