@@ -90,11 +90,6 @@ td.level-ERROR { color: #f85149; }
 td.level-WARN { color: #d29922; }
 td.level-INFO { color: #3fb950; }
 
-/* Side-by-side matched table */
-.match-table td.col-a { color: #3fb950; }
-.match-table td.col-b { color: #f85149; }
-.match-table .sep { color: #30363d; text-align: center; width: 30px; padding: 8px 4px; }
-
 /* Extra tables */
 .extra-table td { color: #e3b341; }
 .pill {
@@ -135,7 +130,7 @@ td.level-INFO { color: #3fb950; }
     <div class="diff-count">
       <div class="count" th:text="${r.totalDifferences}">0</div>
       <div class="label">Mismatches</div>
-      <div style="font-size:11px;color:#8b949e;margin-top:4px;" th:text="${#lists.size(r.commonEntries)} + ' matched'">0 matched</div>
+      <div style="font-size:11px;color:#8b949e;margin-top:4px;" th:text="${r.commonCount} + ' common (unique)'">0 common</div>
     </div>
 
     <div class="summary-card suspect">
@@ -148,59 +143,23 @@ td.level-INFO { color: #3fb950; }
     </div>
   </div>
 
-  <!-- ───── COMMON ENTRIES (Matched) ───── -->
-  <div class="section" th:if="${#lists.size(r.commonEntries) > 0}">
-    <h2>
-      Common Entries (Matched)
-      <span class="count-badge" th:text="${#lists.size(r.commonEntries)} + ' entries'">0 entries</span>
-    </h2>
-    <div class="table-wrap">
-      <table class="match-table">
-        <thead>
-          <tr>
-            <th>#</th>
-            <th>Timestamp (Correct)</th>
-            <th style="width:30px"></th>
-            <th>Timestamp (Suspect)</th>
-            <th>Message</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr th:each="pair, stat : ${r.commonEntries}">
-            <td class="num" th:text="${stat.count}">1</td>
-            <td class="time col-a" th:text="${pair.entryA.timestamp}">time</td>
-            <td class="sep">⇄</td>
-            <td class="time col-b" th:text="${pair.entryB.timestamp}">time</td>
-            <td class="msg" th:text="${pair.entryA.message}">message text</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-
   <!-- ───── EXTRA IN CORRECT LOG (present in correct, missing from suspect) ───── -->
   <div class="section" th:if="${#lists.size(r.extraInA) > 0}">
     <h2>
-      Missing from Suspect Log
-      <span class="count-badge" th:text="${#lists.size(r.extraInA)} + ' entries'">0 entries</span>
+      Present in Correct, Missing from Suspect
+      <span class="count-badge" th:text="${#lists.size(r.extraInA)} + ' unique'">0</span>
     </h2>
     <div class="table-wrap">
       <table class="extra-table">
         <thead>
           <tr>
             <th>#</th>
-            <th>Timestamp</th>
-            <th>Level</th>
-            <th>Component</th>
             <th>Message</th>
           </tr>
         </thead>
         <tbody>
           <tr th:each="entry, stat : ${r.extraInA}">
             <td class="num" th:text="${stat.count}">1</td>
-            <td class="time" th:text="${entry.timestamp}">time</td>
-            <td><span class="pill" th:text="${entry.level}" th:classappend="${entry.isError() ? 'error' : (entry.isWarn() ? 'warn' : '')}">INFO</span></td>
-            <td th:text="${entry.component}">comp</td>
             <td class="msg" th:text="${entry.message}">message text</td>
           </tr>
         </tbody>
@@ -211,26 +170,20 @@ td.level-INFO { color: #3fb950; }
   <!-- ───── EXTRA IN SUSPECT LOG (present in suspect, missing from correct) ───── -->
   <div class="section" th:if="${#lists.size(r.extraInB) > 0}">
     <h2>
-      Extra Entries in Suspect Log
-      <span class="count-badge" th:text="${#lists.size(r.extraInB)} + ' entries'">0 entries</span>
+      Present in Suspect, Missing from Correct
+      <span class="count-badge" th:text="${#lists.size(r.extraInB)} + ' unique'">0</span>
     </h2>
     <div class="table-wrap">
       <table class="extra-table">
         <thead>
           <tr>
             <th>#</th>
-            <th>Timestamp</th>
-            <th>Level</th>
-            <th>Component</th>
             <th>Message</th>
           </tr>
         </thead>
         <tbody>
           <tr th:each="entry, stat : ${r.extraInB}">
             <td class="num" th:text="${stat.count}">1</td>
-            <td class="time" th:text="${entry.timestamp}">time</td>
-            <td><span class="pill" th:text="${entry.level}" th:classappend="${entry.isError() ? 'error' : (entry.isWarn() ? 'warn' : '')}">INFO</span></td>
-            <td th:text="${entry.component}">comp</td>
             <td class="msg" th:text="${entry.message}">message text</td>
           </tr>
         </tbody>
@@ -238,7 +191,7 @@ td.level-INFO { color: #3fb950; }
     </div>
   </div>
 
-  <div th:if="${#lists.size(r.commonEntries) == 0 and #lists.size(r.extraInA) == 0 and #lists.size(r.extraInB) == 0}" class="empty-state">
+  <div th:if="${#lists.size(r.extraInA) == 0 and #lists.size(r.extraInB) == 0}" class="empty-state">
     <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#3fb950" stroke-width="2">
       <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>
     </svg>

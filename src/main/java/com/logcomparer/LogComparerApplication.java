@@ -72,27 +72,18 @@ class LogReport {
     public List<LogEntry> getEntries() { return entries; }
 }
 
-class MatchedPair {
-    private LogEntry entryA, entryB;
-
-    public MatchedPair(LogEntry a, LogEntry b) { entryA = a; entryB = b; }
-    public LogEntry getEntryA() { return entryA; }
-    public LogEntry getEntryB() { return entryB; }
-}
-
 class ComparisonResult {
     private LogReport logAReport, logBReport;
-    private List<MatchedPair> commonEntries = new ArrayList<>();
     private List<LogEntry> extraInA = new ArrayList<>();
     private List<LogEntry> extraInB = new ArrayList<>();
 
     public ComparisonResult(LogReport a, LogReport b) { logAReport = a; logBReport = b; }
     public LogReport getLogAReport() { return logAReport; }
     public LogReport getLogBReport() { return logBReport; }
-    public List<MatchedPair> getCommonEntries() { return commonEntries; }
     public List<LogEntry> getExtraInA() { return extraInA; }
     public List<LogEntry> getExtraInB() { return extraInB; }
     public int getTotalDifferences() { return extraInA.size() + extraInB.size(); }
+    public int getCommonCount() { return logAReport.getEntries().size() - extraInA.size(); }
 }
 
 // ───── Services ─────
@@ -121,7 +112,7 @@ class CsvParserService {
             int timeIdx = find(header, "_time", "timestamp", "time", "date", "datetime");
             int levelIdx = find(header, "level", "log_level", "severity", "loglevel");
             int compIdx = find(header, "component", "class", "logger", "source");
-            int msgIdx = find(header, "message", "_raw", "log", "text", "event", "description", "msg", "detail", "reason");
+            int msgIdx = find(header, "field16", "message", "_raw", "log", "text", "event", "description", "msg", "detail", "reason");
 
             int lineNum = 0;
             for (CSVRecord r : parser) {
@@ -191,76 +182,41 @@ class LogComparisonService {
         LogReport ra = new LogReport(na, a), rb = new LogReport(nb, b);
         ComparisonResult r = new ComparisonResult(ra, rb);
 
-        // Sort both by timestamp for ordered comparison
-        List<LogEntry> sortedA = new ArrayList<>(a);
-        List<LogEntry> sortedB = new ArrayList<>(b);
-        sortedA.sort(Comparator.comparing(LogEntry::getTimestamp, Comparator.nullsLast(Comparator.naturalOrder())));
-        sortedB.sort(Comparator.comparing(LogEntry::getTimestamp, Comparator.nullsLast(Comparator.naturalOrder())));
+        Set<String> normA = new HashSet<>();
+        Set<String> normB = new HashSet<>();
 
-        // Greedy diff: walk both sequences, pair matching entries
-        int i = 0, j = 0;
-        int lookAhead = 5;
-
-        while (i < sortedA.size() && j < sortedB.size()) {
-            LogEntry entryA = sortedA.get(i);
-            LogEntry entryB = sortedB.get(j);
-
-            if (matches(entryA, entryB)) {
-                r.getCommonEntries().add(new MatchedPair(entryA, entryB));
-                i++; j++;
-                continue;
-            }
-
-            // Look ahead in B to see if A's current entry matches a future B entry
-            boolean foundInB = false;
-            for (int k = 1; k <= lookAhead && j + k < sortedB.size(); k++) {
-                if (matches(entryA, sortedB.get(j + k))) {
-                    for (int m = 0; m < k; m++)
-                        r.getExtraInB().add(sortedB.get(j + m));
-                    r.getCommonEntries().add(new MatchedPair(entryA, sortedB.get(j + k)));
-                    i++; j = j + k + 1;
-                    foundInB = true;
-                    break;
-                }
-            }
-            if (foundInB) continue;
-
-            // Look ahead in A to see if B's current entry matches a future A entry
-            boolean foundInA = false;
-            for (int k = 1; k <= lookAhead && i + k < sortedA.size(); k++) {
-                if (matches(sortedA.get(i + k), entryB)) {
-                    for (int m = 0; m < k; m++)
-                        r.getExtraInA().add(sortedA.get(i + m));
-                    r.getCommonEntries().add(new MatchedPair(sortedA.get(i + k), entryB));
-                    i = i + k + 1; j++;
-                    foundInA = true;
-                    break;
-                }
-            }
-            if (foundInA) continue;
-
-            // No match found in look-ahead — mark both as extra and advance
-            r.getExtraInA().add(entryA);
-            r.getExtraInB().add(entryB);
-            i++; j++;
+        for (LogEntry e : a) {
+            String n = e.getNormalizedMessage();
+            if (n != null && !n.isEmpty()) normA.add(n);
+        }
+        for (LogEntry e : b) {
+            String n = e.getNormalizedMessage();
+            if (n != null && !n.isEmpty()) normB.add(n);
         }
 
-        // Remaining entries in A are extras
-        while (i < sortedA.size())
-            r.getExtraInA().add(sortedA.get(i++));
+        Set<String> uniqueA = new LinkedHashSet<>(normA);
+        uniqueA.removeAll(normB);
 
-        // Remaining entries in B are extras
-        while (j < sortedB.size())
-            r.getExtraInB().add(sortedB.get(j++));
+        Set<String> uniqueB = new LinkedHashSet<>(normB);
+        uniqueB.removeAll(normA);
+
+        for (LogEntry e : a) {
+            String n = e.getNormalizedMessage();
+            if (n != null && uniqueA.contains(n)) {
+                r.getExtraInA().add(e);
+                uniqueA.remove(n);
+            }
+        }
+
+        for (LogEntry e : b) {
+            String n = e.getNormalizedMessage();
+            if (n != null && uniqueB.contains(n)) {
+                r.getExtraInB().add(e);
+                uniqueB.remove(n);
+            }
+        }
 
         return r;
-    }
-
-    private boolean matches(LogEntry a, LogEntry b) {
-        String normA = a.getNormalizedMessage();
-        String normB = b.getNormalizedMessage();
-        if (normA == null || normB == null) return false;
-        return normA.equals(normB);
     }
 }
 
